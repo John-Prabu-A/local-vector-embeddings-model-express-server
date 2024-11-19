@@ -5,37 +5,35 @@ import cors from 'cors';
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware to parse JSON requests
+// Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
 let modelPipeline;
 
+// Function to load the model
 async function loadModel() {
-
   try {
     modelPipeline = await pipeline('feature-extraction');
     console.log('Model loaded successfully');
   } catch (error) {
     console.error('Error loading model:', error);
-    process.exit(1);
+    process.exit(1); // Exit if the model fails to load
   }
 }
 
 // Load the model at startup
 loadModel();
 
+// Utility function: Cosine similarity
 function cosineSimilarity(a, b) {
   if (a.length !== b.length) {
-      throw new Error('Both arguments must have the same length');
+    throw new Error('Both arguments must have the same length');
   }
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-      result += a[i] * b[i];
-  }
-  return result;
+  return a.reduce((sum, ai, i) => sum + ai * b[i], 0);
 }
 
+// Routes
 app.get('/', (req, res) => {
   res.send('Hello World');
 });
@@ -44,7 +42,6 @@ app.post('/embed', async (req, res) => {
   if (!modelPipeline) {
     return res.status(503).json({ error: 'Model is loading, please try again later' });
   }
-  // console.log(req.body);
 
   const { text } = req.body;
   if (!text) {
@@ -60,28 +57,30 @@ app.post('/embed', async (req, res) => {
   }
 });
 
-app.post('/similarity', async (req, res) => {
-  const data = req.body;
-  // console.log("Similarity :", data);
-  const userEmbedding = data.userEmbedding;
-  const eventEmbeddings = data.events;
-  const output = [];
+app.post('/similarity', (req, res) => {
+  const { userEmbedding, events } = req.body;
 
-  for (const [index, eventEmbedding] of eventEmbeddings.entries()) {
-    const embedding = JSON.parse(eventEmbedding.embedding);
-    const uEmbedding = JSON.parse(userEmbedding);
-    const similarity = cosineSimilarity(uEmbedding, embedding);
-    output.push({ id: eventEmbedding.id, similarity: similarity });
+  if (!userEmbedding || !events) {
+    return res.status(400).json({ error: 'userEmbedding and events are required' });
   }
 
-  // console.log("Output: ",output);
+  try {
+    const parsedUserEmbedding = JSON.parse(userEmbedding);
+    const output = events.map((event) => {
+      const parsedEventEmbedding = JSON.parse(event.embedding);
+      const similarity = cosineSimilarity(parsedUserEmbedding, parsedEventEmbedding);
+      return { id: event.id, similarity };
+    });
 
-  // Sort output based on similarity from max to min
-  res.json(output.sort((a, b) => b.similarity - a.similarity).map((item) => item.id));
+    // Sort by similarity in descending order and return only the IDs
+    res.json(output.sort((a, b) => b.similarity - a.similarity).map((item) => item.id));
+  } catch (error) {
+    console.error('Error calculating similarity:', error);
+    res.status(500).json({ error: 'Error calculating similarity' });
+  }
 });
-
 
 // Start the server
 app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+  console.log(`Server is running on ${process.env.SERVER_URL || `http://localhost:${port}`}`);
 });
